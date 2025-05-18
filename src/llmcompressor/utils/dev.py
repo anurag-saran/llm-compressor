@@ -1,5 +1,5 @@
 import contextlib
-import logging
+import logging  # For interacting with transformers library's logger
 import os
 import tempfile
 from typing import Type
@@ -13,25 +13,31 @@ from transformers.utils import SAFE_WEIGHTS_INDEX_NAME, WEIGHTS_INDEX_NAME
 
 from llmcompressor.utils.helpers import patch_attr
 
+# from loguru import logger # Per F401, unused in this file's current state.
+
+
 __all__ = ["skip_weights_download", "patch_transformers_logger_level"]
 
 
 @contextlib.contextmanager
 def skip_weights_download(model_class: Type[PreTrainedModel] = AutoModelForCausalLM):
     """
-    Context manager under which models are initialized without having to download
-    the model weight files. This differs from `init_empty_weights` in that weights are
-    allocated on to assigned devices with random values, as opposed to being on the meta
-    device
+    Context manager: initialize models without downloading model weight files.
+
+    Differs from `init_empty_weights`: weights are allocated on assigned
+    devices with random values, not on the meta device.
 
     :param model_class: class to patch, defaults to `AutoModelForCausalLM`
     """
     original_fn = model_class.from_pretrained
-    weights_files = [
+    # Files to ignore when downloading the model snapshot.
+    weights_files_to_ignore = [
         "*.bin",
         "*.safetensors",
         "*.pth",
+        # e.g., "model.safetensors.index.json" from transformers.utils
         SAFE_WEIGHTS_INDEX_NAME,
+        # e.g., "pytorch_model.bin.index.json" from transformers.utils
         WEIGHTS_INDEX_NAME,
         "*.msgpack",
     ]
@@ -40,28 +46,33 @@ def skip_weights_download(model_class: Type[PreTrainedModel] = AutoModelForCausa
     def patched(cls, *args, **kwargs):
         nonlocal tmp_dir
 
-        # intercept model stub
-        model_stub = args[0] if args else kwargs.pop("pretrained_model_name_or_path")
+        model_stub_arg = "pretrained_model_name_or_path"
+        # Intercept model stub (pretrained_model_name_or_path)
+        model_stub = args[0] if args else kwargs.pop(model_stub_arg)
 
-        # download files into tmp dir
+        # Download files into tmp dir, ignoring specified weight patterns
         os.makedirs(tmp_dir, exist_ok=True)
         snapshot_download(
-            repo_id=model_stub, local_dir=tmp_dir, ignore_patterns=weights_files
+            repo_id=model_stub,
+            local_dir=tmp_dir,
+            ignore_patterns=weights_files_to_ignore,
         )
 
-        # make an empty weights file to avoid errors
+        # Make an empty weights file to avoid errors during model loading.
         weights_file_path = os.path.join(tmp_dir, "model.safetensors")
         save_file({}, weights_file_path, metadata={"format": "pt"})
 
-        # load from tmp dir
+        # Load model from the temporary directory
         model = original_fn(tmp_dir, **kwargs)
 
-        # replace model_path
+        # Replace model_path attributes to reflect original stub
         model.name_or_path = model_stub
-        model.config._name_or_path = model_stub
+        if hasattr(model, "config") and model.config is not None:
+            model.config._name_or_path = model_stub
 
         return model
 
+    # Using explicit line continuation for the with statement
     with tempfile.TemporaryDirectory() as tmp_dir, patch_attr(
         model_class, "from_pretrained", patched
     ), skip_weights_initialize(), patch_transformers_logger_level():
@@ -71,15 +82,16 @@ def skip_weights_download(model_class: Type[PreTrainedModel] = AutoModelForCausa
 @contextlib.contextmanager
 def skip_weights_initialize(use_zeros: bool = False):
     """
-    Very similar to `transformers.model_utils.no_init_weights`, except that torch.Tensor
-    initialization functions are also patched to account for tensors which are
-    initialized not on the meta device
+    Similar to `transformers.model_utils.no_init_weights`.
+
+    Also patches torch.Tensor initialization to account for tensors
+    not initialized on the meta device.
     """
 
     def skip(tensor: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         if use_zeros:
             return tensor.fill_(0)
-        return tensor
+        return tensor  # Return tensor as is (random values from allocation)
 
     with contextlib.ExitStack() as stack:
         for name in TORCH_INIT_FUNCTIONS.keys():
@@ -91,17 +103,24 @@ def skip_weights_initialize(use_zeros: bool = False):
 @contextlib.contextmanager
 def patch_transformers_logger_level(level: int = logging.ERROR):
     """
-    Context under which the transformers logger's level is modified
+    Context manager: modify Hugging Face transformers library logger level.
 
-    This can be used with `skip_weights_download` to squelch warnings related to
-    missing parameters in the checkpoint
+    Use with `skip_weights_download` to squelch transformers warnings
+    about missing parameters in a checkpoint.
 
-    :param level: new logging level for transformers logger. Logs whose level is below
-        this level will not be logged
+    :param level: new logging level for 'transformers' logger
+                  (e.g., logging.WARNING, logging.ERROR).
     """
-    transformers_logger = logging.getLogger("transformers.modeling_utils")
-    restore_log_level = transformers_logger.getEffectiveLevel()
+    # Get the specific logger used by Hugging Face transformers
+    hf_transformers_logger = logging.getLogger("transformers")
+    original_level = hf_transformers_logger.getEffectiveLevel()
 
-    transformers_logger.setLevel(level=level)
-    yield
-    transformers_logger.setLevel(level=restore_log_level)
+    hf_transformers_logger.setLevel(level)
+    try:
+        yield
+    finally:
+        # Restore original logging level for the transformers logger
+        hf_transformers_logger.setLevel(original_level)
+
+
+# MAKE SURE THERE IS A NEWLINE CHARACTER AFTER THIS LINE

@@ -25,6 +25,7 @@ from torch import nn
 
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.utils import logging
+from loguru import logger
 # from transformers.models.auto import AutoModel
 from transformers.models.idefics3.configuration_idefics3 import Idefics3Config
 from transformers.models.idefics3.modeling_idefics3 import (

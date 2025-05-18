@@ -17,6 +17,7 @@
 """PyTorch Mllama model."""
 
 from typing import List, Optional, Tuple, Union
+from loguru import logger
 
 import torch
 import torch.utils.checkpoint
@@ -32,6 +33,8 @@ from transformers.models.mllama.modeling_mllama import (
     MLLAMA_START_DOCSTRING,
     MllamaForConditionalGeneration,
 )
+
+from loguru import logger
 
 logger = logging.get_logger(__name__)
 
