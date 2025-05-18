@@ -1,11 +1,11 @@
 import contextlib
-import logging
 import os
 import tempfile
 from typing import Type
 
 import torch
 from huggingface_hub import snapshot_download
+from loguru import logger
 from safetensors.torch import save_file
 from transformers import AutoModelForCausalLM, PreTrainedModel
 from transformers.modeling_utils import TORCH_INIT_FUNCTIONS
@@ -88,20 +88,20 @@ def skip_weights_initialize(use_zeros: bool = False):
         yield
 
 
-@contextlib.contextmanager
-def patch_transformers_logger_level(level: int = logging.ERROR):
+def patch_transformers_logger_level(level: int = 40):  # 40 corresponds to ERROR level
     """
-    Context under which the transformers logger's level is modified
+    Context under which the transformers logger's level is modified.
 
-    This can be used with `skip_weights_download` to squelch warnings related to
-    missing parameters in the checkpoint
+    This can be used with [skip_weights_download]
+    (cci:1://file:///Users/asaran/Documents/llm-compressor/src/llmcompressor/utils/dev.py:18:0-67:13)
+    to squelch warnings related to missing parameters in the checkpoint.
 
-    :param level: new logging level for transformers logger. Logs whose level is below
-        this level will not be logged
+    :param level: new logging level for transformers logger. Logs whose
+    level is below this level will not be logged.
     """
-    transformers_logger = logging.getLogger("transformers.modeling_utils")
-    restore_log_level = transformers_logger.getEffectiveLevel()
+    transformers_logger = logger.bind(name="transformers.modeling_utils")
+    restore_log_level = transformers_logger.level
 
-    transformers_logger.setLevel(level=level)
+    transformers_logger.level = level
     yield
-    transformers_logger.setLevel(level=restore_log_level)
+    transformers_logger.level = restore_log_level
